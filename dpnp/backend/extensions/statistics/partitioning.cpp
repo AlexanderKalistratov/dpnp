@@ -55,8 +55,9 @@ void validate(const usm_ndarray &a,
     check_num_dims(&a, 1, names);
     check_num_dims(&partitioned, 1, names);
     check_same_dtype(&a, &partitioned, names);
+    check_size_at_least(&a, 2, names);
 
-    if (k > a.get_size() - 2) {
+    if (k > size_t(a.get_size() - 2)) {
         throw py::value_error("'k' must be from 0 to a.size() - 2, "
                               "but got k = " +
                               std::to_string(k) + " and a.size() = " +

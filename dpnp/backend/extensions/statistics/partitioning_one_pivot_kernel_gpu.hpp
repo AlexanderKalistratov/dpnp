@@ -69,7 +69,6 @@ auto partition_one_pivot_func_gpu(sycl::handler &cgh,
 
         auto group = item.get_group();
         auto group_range = group.get_local_range(0);
-        auto llid = item.get_local_linear_id();
         uint64_t items_per_group = group.get_local_range(0) * WorkPI;
         uint64_t num_elems = state.num_elems[0];
 
@@ -89,7 +88,6 @@ auto partition_one_pivot_func_gpu(sycl::handler &cgh,
         auto sbg = item.get_sub_group();
 
         uint32_t sbg_size = sbg.get_max_local_range()[0];
-        uint32_t sbg_work_size = sbg_size * WorkPI;
         uint32_t sbg_llid = sbg.get_local_linear_id();
         uint64_t i_base = (item.get_global_linear_id() - sbg_llid) * WorkPI;
 
@@ -102,15 +100,10 @@ auto partition_one_pivot_func_gpu(sycl::handler &cgh,
         sycl::group_barrier(group);
 
         for (uint32_t _i = 0; _i < WorkPI; ++_i) {
-            uint32_t less_count = 0;
-            uint32_t equal_count = 0;
-            uint32_t greater_equal_count = 0;
-
-            uint32_t actual_count = 0;
             auto i = i_base + _i * sbg_size + sbg_llid;
             uint32_t valid = i < num_elems;
             auto val = valid ? _in[i] : 0;
-            uint32_t less = (val < value) && valid;
+            uint32_t less = Less<T>{}(val, value) && valid;
             uint32_t equal = (val == value) && valid;
 
             auto le_pos =
@@ -213,6 +206,7 @@ template <typename T>
 sycl::event run_partition_one_pivot_gpu(sycl::queue &exec_q,
                                         T *in,
                                         T *out,
+                                        const size_t n,
                                         PartitionState<T> &state,
                                         const std::vector<sycl::event> &deps,
                                         uint32_t group_size,
@@ -221,7 +215,7 @@ sycl::event run_partition_one_pivot_gpu(sycl::queue &exec_q,
     auto e = exec_q.submit([&](sycl::handler &cgh) {
         cgh.depends_on(deps);
 
-        auto work_range = make_ndrange(state.n, group_size, WorkPI);
+        auto work_range = make_ndrange(n, group_size, WorkPI);
 
         cgh.parallel_for<partition_one_pivot_kernel_gpu<T>>(
             work_range, partition_one_pivot_func_gpu<T>(cgh, in, out, state,

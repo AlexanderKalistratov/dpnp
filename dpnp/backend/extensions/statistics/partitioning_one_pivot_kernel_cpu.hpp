@@ -206,6 +206,7 @@ template <typename T, uint32_t WorkPI>
 sycl::event run_partition_one_pivot_cpu(sycl::queue &exec_q,
                                         T *in,
                                         T *out,
+                                        const size_t n,
                                         PartitionState<T> &state,
                                         const std::vector<sycl::event> &deps,
                                         uint32_t group_size)
@@ -213,7 +214,7 @@ sycl::event run_partition_one_pivot_cpu(sycl::queue &exec_q,
     auto e = exec_q.submit([&](sycl::handler &cgh) {
         cgh.depends_on(deps);
 
-        auto work_range = make_ndrange(state.n, group_size, WorkPI);
+        auto work_range = make_ndrange(n, group_size, WorkPI);
 
         cgh.parallel_for<partition_one_pivot_kernel_cpu<T, WorkPI>>(
             work_range,

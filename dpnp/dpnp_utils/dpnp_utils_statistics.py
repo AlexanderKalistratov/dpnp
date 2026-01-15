@@ -194,18 +194,26 @@ def dpnp_cov(
     return c.squeeze()
 
 
-def native_median(a, ignore_nan):
+def _native_kth_element(a, k):
+    """
+    Find kth and (k+1)th elements in a 1D array.
+
+    Returns tuple of dpnp.array and nan count.
+    The array is a two element view to an array of size a.size. It contains
+    the kth and (k+1)th elements of the input array.
+
+    Input array must have more than 1 element.
+    k must be in the range [0, a.size - 2].
+    """
+
     a = dpnp.reshape(a, a.size)
     device = a.sycl_device
 
-    result_dtype = dpnp.default_float_type()
-    if dpnp.issubdtype(a.dtype, dpnp.complexfloating):
-        result_dtype = a.dtype
+    if a.size < 2: # pragma: no cover
+        raise ValueError("Input array must have at least 2 elements.")
 
-    if a.size == 0:
-        return dpnp.array(dpnp.nan, ndmin=1, dtype=result_dtype)
-    elif a.size == 1:
-        return dpnp.array(a[0], ndmin=1, dtype=result_dtype)
+    if k < 0 or k >= a.size - 1: # pragma: no cover
+        raise ValueError(f"k must be in the range [0, {a.size - 2}]")
 
     supported_types = statistics_ext.kth_element_dtypes()
     supported_dtype = to_supported_dtypes(a.dtype, supported_types, device)
@@ -228,13 +236,6 @@ def native_median(a, ignore_nan):
 
     _manager = dpu.SequentialOrderManager[a.sycl_queue]
 
-    result = dpnp.empty_like(a, dtype=result_dtype, shape=1)
-
-    nans = 0
-    if ignore_nan:
-        nans = dpnp.isnan(a_usm).sum()
-    k = (a.shape[0] - 1 - nans) // 2
-
     found, buff_offset, elems_offset, num_elems, nan_count = (
         statistics_ext.kth_element(
             a_usm,
@@ -244,23 +245,47 @@ def native_median(a, ignore_nan):
         )
     )
 
+    if found:
+        return partitioned[0:2], nan_count
+
+    # if failed to find, sort the partitioned array
+    # this should not happen in most cases
+    # pragma: no cover
+    partitioned[buff_offset : buff_offset + num_elems].sort()
+    kth_idx = buff_offset + k - elems_offset
+
+    return partitioned[kth_idx:kth_idx + 2], nan_count
+
+
+def native_median(a, ignore_nan):
+    a = dpnp.reshape(a, a.size)
+    device = a.sycl_device
+
+    result_dtype = a.dtype
+    if not dpnp.issubdtype(result_dtype, dpnp.inexact):
+        result_dtype = dpnp.default_float_type()
+
+    if a.size == 0:
+        return dpnp.array(dpnp.nan, ndmin=1, dtype=result_dtype)
+    elif a.size == 1:
+        return dpnp.array(a[0], ndmin=1, dtype=result_dtype)
+
+    result = dpnp.empty_like(a, dtype=result_dtype, shape=1)
+
+    nans = 0
+    if ignore_nan:
+        nans = dpnp.isnan(a).sum()
+    k = (a.shape[0] - 1 - nans) // 2
+
+    kth, nan_count = _native_kth_element(a, k)
+
     if not ignore_nan and nan_count > 0:
         return dpnp.array(dpnp.nan, ndmin=1, dtype=result_dtype)
 
-    if found:
-        if a.shape[0] % 2 == 0:
-            # even number of elements
-            result[0] = (partitioned[0] + partitioned[1]) / 2
-        else:
-            result[0] = partitioned[0]
+    if a.shape[0] % 2 == 0:
+        result[0] = (kth[0] + kth[1]) / 2
     else:
-        partitioned[buff_offset : buff_offset + num_elems].sort()
-        kth_idx = buff_offset + k - elems_offset
-        if a.shape[0] % 2 == 0:
-            # even number of elements
-            result[0] = (partitioned[kth_idx] + partitioned[kth_idx + 1]) / 2
-        else:
-            result[0] = partitioned[kth_idx]
+        result[0] = kth[0]
 
     return result
 

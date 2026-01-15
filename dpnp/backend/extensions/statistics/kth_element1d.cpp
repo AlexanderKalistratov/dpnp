@@ -125,10 +125,8 @@ struct KthElementF
                     if (state.stop[0])
                         return;
 
-                    auto llid = item.get_local_linear_id();
                     uint32_t sbg_size = sbg.get_max_local_range()[0];
                     uint32_t sbg_llid = sbg.get_local_linear_id();
-                    auto local_size = item.get_group_range(0);
                     uint32_t nan_count = 0;
 
                     uint32_t i_base =
@@ -311,7 +309,7 @@ struct KthElementF
                 index =
                     sycl::reduce_over_group(group, index, sycl::minimum<>());
                 if (group.leader()) {
-                    if (loc_items[index] != new_pivot ||
+                    if (loc_items[index] != new_pivot &&
                         !IsNan<T>::isnan(loc_items[index])) {
                         // if all values are Nan just use it as pivot
                         // to filter out all the Nans
@@ -337,14 +335,11 @@ struct KthElementF
     static sycl::event run_partition(sycl::queue &exec_q,
                                      T *in,
                                      T *out,
+                                     const size_t n,
                                      PartitionState<T> &state,
                                      const std::vector<sycl::event> &deps)
     {
-
-        uint32_t group_size = 128;
-        constexpr uint32_t WorkPI = 4;
-        return run_partition_one_pivot_cpu<T, WorkPI>(exec_q, in, out, state,
-                                                      deps, group_size);
+        return run_partition_one_pivot<T>(exec_q, in, out, n, state, deps);
     }
 
     static sycl::event run_kth_element(sycl::queue &exec_q,
@@ -376,17 +371,32 @@ struct KthElementF
             iterations += 1 - iterations % 2;
         }
 
+
+        size_t num_elems = state.n;
+        bool found = false;
+
         auto prev = run_pick_pivot(exec_q, const_cast<T *>(in), partitioned, k,
                                    state, items_to_sort, limit, depends);
-        prev = run_partition(exec_q, const_cast<T *>(in), partitioned, pstate,
+        prev = run_partition(exec_q, const_cast<T *>(in), partitioned, num_elems, pstate,
                              {prev});
+
+        auto copy_e = exec_q.copy(state.target_found, &found, 1, prev);
+        copy_e = exec_q.copy(state.num_elems, &num_elems, 1, copy_e);
 
         T *_in = partitioned;
         T *_out = temp_buff;
         for (uint32_t i = 0; i < iterations - 1; ++i) {
             prev = run_pick_pivot(exec_q, _in, _out, k, state, items_to_sort,
                                   limit, {prev});
-            prev = run_partition(exec_q, _in, _out, pstate, {prev});
+
+            copy_e.wait();
+            if (found) {
+                break;
+            }
+            prev = run_partition(exec_q, _in, _out, num_elems, pstate, {prev});
+
+            copy_e = exec_q.copy(state.target_found, &found, 1, prev);
+            copy_e = exec_q.copy(state.num_elems, &num_elems, 1, copy_e);
             std::swap(_in, _out);
         }
         prev = run_pick_pivot(exec_q, _in, _out, k, state, items_to_sort, limit,

@@ -204,6 +204,7 @@ template <typename T>
 sycl::event run_partition_one_pivot(sycl::queue &exec_q,
                                     T *in,
                                     T *out,
+                                    const size_t n,
                                     PartitionState<T> &state,
                                     const std::vector<sycl::event> &deps)
 {
@@ -213,14 +214,14 @@ sycl::event run_partition_one_pivot(sycl::queue &exec_q,
         constexpr uint32_t WorkPI = 8;
         constexpr uint32_t group_size = 128;
 
-        return run_partition_one_pivot_gpu<T>(exec_q, in, out, state, deps,
+        return run_partition_one_pivot_gpu<T>(exec_q, in, out, n, state, deps,
                                               group_size, WorkPI);
     }
     else {
         constexpr uint32_t WorkPI = 4;
         constexpr uint32_t group_size = 128;
 
-        return run_partition_one_pivot_cpu<T, WorkPI>(exec_q, in, out, state,
+        return run_partition_one_pivot_cpu<T, WorkPI>(exec_q, in, out, n, state,
                                                       deps, group_size);
     }
 }
